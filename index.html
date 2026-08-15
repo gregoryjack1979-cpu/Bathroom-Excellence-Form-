@@ -330,9 +330,15 @@
       options: [
         { value: 'Replace my tub/shower', points: 0 },
         { value: 'Convert tub to walk-in shower', points: 0 },
-        { value: 'Walk-in tub / accessibility project', points: 0 },
         { value: 'Complete bathroom remodel', points: 0 },
+        /* A new bathroom is not a remodel: basements bring drainage and often
+           an ejector pump, additions bring framing and permits. Named rather
+           than filed under "custom" so the segment stays analysable later. */
+        { value: 'New bathroom — basement or addition', points: 0 },
         { value: 'Multiple bathrooms', points: 0 },
+        /* Named as the product, not as an "accessibility project" — the latter
+           reads as grab bars and seats, which is not work we are quoting for. */
+        { value: 'Walk-in tub', points: 0 },
         { value: 'Not sure yet', points: 0 }
       ]
     },
@@ -793,29 +799,42 @@
     badge.appendChild(tick());
     c.appendChild(badge);
 
-    c.appendChild(el('h2', null, "Great — you're ready to choose an appointment."));
-    c.appendChild(el('p', 'lead', "We've matched your project with our current appointment availability."));
+    var name = (contact.fullName || '').trim().split(/\s+/)[0];
 
-    if (s.priority === 'High') {
-      /* Priority: book straight onto the calendar. */
+    /* Only promise a calendar when one is actually configured. Without it the
+       high-priority path books by phone instead, and the copy says so. */
+    if (s.priority === 'High' && CALENDAR_EMBED) {
+      c.appendChild(el('h2', null, "Great — you're ready to choose an appointment."));
+      c.appendChild(el('p', 'lead', "We've matched your project with our current appointment availability."));
+
       var embed = el('div', 'embed');
       embed.id = 'calendarEmbed';
-      if (CALENDAR_EMBED) {
-        embed.innerHTML = CALENDAR_EMBED;
-      } else {
-        embed.appendChild(el('p', null, 'Your booking calendar goes here.'));
-        var hint = el('p', null, 'Paste your Calendly, Acuity, or CRM embed into CALENDAR_EMBED at the top of the script.');
-        hint.style.margin = '0';
-        hint.style.fontSize = '.86rem';
-        embed.appendChild(hint);
-      }
+      embed.innerHTML = CALENDAR_EMBED;
       c.appendChild(embed);
 
       var pri = el('p', 'note');
       pri.innerHTML = '<strong>You have priority access.</strong> Pick any time above and it’s yours — ' +
         'these slots are held for you and won’t be double booked. Questions first? Call ' + PHONE + '.';
       c.appendChild(pri);
+
+    } else if (s.priority === 'High') {
+      c.appendChild(el('h2', null, name
+        ? 'You’re at the front of the line, ' + name + '.'
+        : 'You’re at the front of the line.'));
+      c.appendChild(el('p', 'lead',
+        'We’ve matched your project with our current availability and flagged it for priority booking.'));
+
+      var call = el('p', 'note');
+      call.innerHTML = '<strong>A senior design consultant will call you shortly.</strong> ' +
+        'Because your project is flagged as priority, you get first choice of our open times — ' +
+        'including evenings and Saturdays. Don’t want to wait? Call ' + PHONE + ' now and ' +
+        'mention you just finished the online scheduler.';
+      c.appendChild(call);
+
     } else {
+      c.appendChild(el('h2', null, name ? 'Thanks, ' + name + ' — we’ve got what we need.' : 'Thanks — we’ve got what we need.'));
+      c.appendChild(el('p', 'lead', "We've matched your project with our current appointment availability."));
+
       /* Standard: request a flexible window and confirm by phone. */
       var std = el('p', 'note');
       std.innerHTML = '<strong>Your appointment request is in.</strong> A design consultant will ' +
