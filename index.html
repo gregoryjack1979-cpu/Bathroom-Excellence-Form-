@@ -250,7 +250,11 @@
 
 <header class="banner">
 
+  <!-- poster holds the logo still in the video's box until the first frame is
+       ready, then the video takes over on its own. Upload the logo to this
+       repository as logo.jpg for it to appear. -->
   <video class="hero-video" autoplay muted loop playsinline preload="auto"
+         poster="logo.jpg"
          aria-label="Bathroom Excellence" disablepictureinpicture>
     <source src="bathroom-background.mp4" type="video/mp4">
   </video>
