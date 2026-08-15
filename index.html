@@ -360,22 +360,18 @@
   'use strict';
 
   /* ==================================================================
-     1. PASTE YOUR MAKE.COM WEBHOOK URL HERE
+     1. MAKE.COM WEBHOOK
      ------------------------------------------------------------------
-     In Make.com: add a "Custom webhook" trigger, click "Copy address to
-     clipboard", and paste it between the quotes below. It looks like:
-     https://hook.us1.make.com/abcdef1234567890abcdef1234567890
-
-     Leave it as-is while testing — the payload is logged to the browser
-     console (F12) and saved to localStorage under "be_leads" instead.
+     Currently pointed at the "BE Scored Form - Inbound" webhook, which
+     feeds the "BE - Scored Web Form -> Builder Prime" scenario.
      ================================================================== */
-  var WEBHOOK_URL = 'YOUR_MAKE_WEBHOOK_URL_HERE';
+  var WEBHOOK_URL = 'https://hook.us1.make.com/momgk27f817s6lpdd415un4oixkd7non';
 
   /* ==================================================================
      2. OPTIONAL: PASTE YOUR BOOKING CALENDAR EMBED HERE
      ------------------------------------------------------------------
      High-priority leads (score >= 80) see a live calendar. Paste your
-     Calendly / Acuity / CRM iframe markup between the backticks. Leave
+     Calendly / Acuity / CRM iframe markup between the quotes. Leave
      it empty to show the fallback "we'll call you" message instead.
 
      Example:
