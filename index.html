@@ -195,13 +195,43 @@
   }
   .badge svg { width: 28px; height: 28px; }
 
-  /* Paste your booking calendar embed inside #calendarEmbed. */
-  .embed {
-    margin: 22px 0 6px; padding: 26px 20px; text-align: center;
-    background: #f7fafb; border: 1.5px dashed var(--line); border-radius: 10px;
-    color: var(--muted); font-size: .93rem;
+  /* ---- booking calendar ---- */
+  .cal { margin: 22px 0 4px; text-align: left; }
+
+  .cal-day {
+    border: 1px solid var(--line); border-radius: 11px;
+    padding: 14px 16px; margin-bottom: 10px; background: #fff;
   }
-  .embed iframe { width: 100%; min-height: 640px; border: 0; display: block; }
+  .cal-day h3 {
+    margin: 0 0 10px; font-size: .95rem; font-weight: 600; color: var(--ink);
+    letter-spacing: .01em;
+  }
+  .cal-day h3 span { color: var(--muted); font-weight: 400; }
+
+  .cal-times {
+    display: grid; gap: 8px;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  }
+  .cal-slot {
+    appearance: none; -webkit-appearance: none;
+    padding: 11px 8px; border-radius: 9px; cursor: pointer;
+    border: 1.5px solid #d7e2e8; background: #f7fafb;
+    font: inherit; font-size: .93rem; font-weight: 600; color: var(--ink);
+    transition: border-color .15s, background .15s, transform .08s;
+  }
+  .cal-slot:hover:not(:disabled) { border-color: var(--accent); background: #eef7f9; }
+  .cal-slot:active:not(:disabled) { transform: translateY(1px); }
+  .cal-slot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cal-slot:disabled { opacity: .5; cursor: default; }
+
+  .cal-more {
+    margin: 4px 0 0; font-size: .88rem; color: var(--muted); text-align: center;
+  }
+  .cal-more button {
+    appearance: none; background: none; border: 0; padding: 6px 4px;
+    font: inherit; font-size: .88rem; color: var(--accent);
+    text-decoration: underline; cursor: pointer;
+  }
 
   .note {
     margin: 22px 0 0; padding: 16px 18px; border-radius: 10px;
@@ -305,16 +335,52 @@
   var WEBHOOK_URL = 'https://hook.us1.make.com/momgk27f817s6lpdd415un4oixkd7non';
 
   /* ==================================================================
-     2. OPTIONAL: PASTE YOUR BOOKING CALENDAR EMBED HERE
+     2. BOOKING CALENDAR
      ------------------------------------------------------------------
-     High-priority leads (score >= 80) see a live calendar. Paste your
-     Calendly / Acuity / CRM iframe markup between the backticks. Leave
-     it empty to show the fallback "we'll call you" message instead.
+     High-priority leads (score >= 80) see live availability and book
+     themselves. Two Make webhooks back it:
 
-     Example:
-     var CALENDAR_EMBED = '<iframe src="https://calendly.com/your-name/consultation"></iframe>';
+       AVAILABILITY_URL - "BE Calendar - Availability". Returns what is
+       already busy: Builder Prime meetings for the next 28 days (agent
+       id + start/end only, no customer details) plus any blackout rows
+       from the BE Slot Inventory data store.
+
+       BOOK_URL - "BE Calendar - Book". Claims the slot, then hands off
+       to the existing "Script Form 1" webhook, which is what actually
+       creates the Builder Prime meeting and writes the tracking sheet.
+       Returns 409 if someone took the slot first.
+
+     Leave either empty to fall back to the "we'll call you" message.
      ================================================================== */
-  var CALENDAR_EMBED = '';
+  var AVAILABILITY_URL = 'https://hook.us1.make.com/7gsn1pbwj987s5dysghdnwk6buf69yqt';
+  var BOOK_URL = 'https://hook.us1.make.com/v779dp9g9nl2syr8n9armlywo89sck74';
+
+  /* ------------------------------------------------------------------
+     Who works which days, and the appointment start times. Weekday keys
+     are the 3-letter forms Intl produces for en-US.
+
+     `days` is the standing schedule. To block a one-off day (vacation,
+     a Saturday off), add a row to the BE Slot Inventory data store with
+     primary_status "blackout", the agent's name, and block "ALL" for a
+     whole day or the specific time for a single slot.
+     ------------------------------------------------------------------ */
+  var AGENTS = [
+    { name: 'Jack', id: 16410, days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] },
+    { name: 'Dave', id: 20307, days: ['Tue', 'Wed'] }
+  ];
+
+  /* Builder Prime appointments run an hour and start on the hour. */
+  var SLOT_TIMES = ['09:00', '10:00', '13:00', '14:00', '17:00', '18:00'];
+  var SLOT_MINUTES = 60;
+
+  /* How far out to offer, and how much notice we need before a slot. */
+  var HORIZON_DAYS = 21;
+  var MIN_NOTICE_HOURS = 18;
+
+  /* Everything is scheduled in the company's local time, not the
+     visitor's - somebody booking from a phone on Pacific time still
+     picks a St. Charles morning. */
+  var TZ = 'America/Chicago';
 
   /* The score at or above which a lead gets priority booking. */
   var PRIORITY_THRESHOLD = 80;
@@ -792,9 +858,369 @@
     show(c);
   }
 
+  /* ---------- booking calendar ---------- */
+
+  /* All slot maths happens in the company's timezone. The visitor's clock
+     is irrelevant - and often wrong by an hour or more. */
+
+  function partsInTZ(ms) {
+    var f = new Intl.DateTimeFormat('en-US', {
+      timeZone: TZ, weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit'
+    });
+    var p = {};
+    f.formatToParts(new Date(ms)).forEach(function (x) { p[x.type] = x.value; });
+    return { y: +p.year, m: +p.month, d: +p.day, wd: p.weekday };
+  }
+
+  /* Offset of TZ from UTC at a given instant, in ms. Positive west of
+     Greenwich would be negative here - Chicago returns -5h or -6h. */
+  function tzOffsetMs(ms) {
+    var f = new Intl.DateTimeFormat('en-US', {
+      timeZone: TZ, hour12: false, year: 'numeric', month: '2-digit',
+      day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+    var p = {};
+    f.formatToParts(new Date(ms)).forEach(function (x) { p[x.type] = x.value; });
+    var asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, (+p.hour) % 24, +p.minute, +p.second);
+    return asUTC - ms;
+  }
+
+  /* Epoch ms for a wall-clock time in TZ. Two passes so the offset is
+     read at roughly the right instant; our slots sit nowhere near the
+     2am DST switch, so this always settles. */
+  function epochFor(y, m, d, hh, mm) {
+    var guess = Date.UTC(y, m - 1, d, hh, mm, 0);
+    var t = guess - tzOffsetMs(guess);
+    return guess - tzOffsetMs(t);
+  }
+
+  function timeLabel(hhmm) {
+    var h = +hhmm.slice(0, 2), m = hhmm.slice(3);
+    var ampm = h >= 12 ? 'PM' : 'AM';
+    var h12 = h % 12; if (h12 === 0) h12 = 12;
+    return h12 + ':' + m + ' ' + ampm;
+  }
+
+  function dayLabel(ms) {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: TZ, weekday: 'long', month: 'short', day: 'numeric'
+    }).format(new Date(ms));
+  }
+
+  function iso(p) {
+    return p.y + '-' + String(p.m).padStart(2, '0') + '-' + String(p.d).padStart(2, '0');
+  }
+
+  function fetchAvailability() {
+    return fetch(AVAILABILITY_URL, { method: 'GET' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        return {
+          now: +j.now || Date.now(),
+          /* Cancelled meetings free their slot back up. */
+          busy: (j.busy || []).filter(function (b) { return b && b.s && !b.c; }),
+          marks: (j.marks || []).filter(function (m) { return m && m.d; })
+        };
+      });
+  }
+
+  /* Build the offer grid: every agent's standing schedule, minus what
+     Builder Prime already has, minus blackouts, minus anything too soon.
+
+     Note we never offer a slot an agent is already on. Priority leads
+     are exactly the ones Jack said must never be double booked, and the
+     calendar is only ever shown to priority leads. */
+  function buildDays(avail) {
+    var now = avail.now;
+    var earliest = now + MIN_NOTICE_HOURS * 3600000;
+    var out = [];
+
+    for (var i = 0; i <= HORIZON_DAYS; i++) {
+      /* Noon UTC lands on the same calendar day in Chicago, so stepping
+         by whole days never skips or repeats one across a DST change. */
+      var probe = Date.UTC(partsInTZ(now).y, partsInTZ(now).m - 1, partsInTZ(now).d, 12) + i * 86400000;
+      var p = partsInTZ(probe);
+      var date = iso(p);
+      var slots = [];
+
+      SLOT_TIMES.forEach(function (t) {
+        var start = epochFor(p.y, p.m, p.d, +t.slice(0, 2), +t.slice(3));
+        var end = start + SLOT_MINUTES * 60000;
+        if (start < earliest) return;
+
+        var free = AGENTS.filter(function (a) {
+          if (a.days.indexOf(p.wd) === -1) return false;
+
+          var clash = avail.busy.some(function (b) {
+            return b.e === a.id && b.s < end && b.n > start;
+          });
+          if (clash) return false;
+
+          var blocked = avail.marks.some(function (m) {
+            if (String(m.a || '').toLowerCase() !== a.name.toLowerCase()) return false;
+            if (m.t === 'blackout') return m.d === date && (m.b === 'ALL' || m.b === t);
+            if (m.t === 'booked') return m.s === start;
+            if (m.t === 'hold') return m.s === start && m.x > now;
+            return false;
+          });
+          return !blocked;
+        });
+
+        if (!free.length) return;
+
+        /* Both available: give it to whoever has the lighter day, and
+           alternate on a tie. Without the tie-break the first-listed
+           consultant takes every slot on a quiet week. */
+        var dayStart = epochFor(p.y, p.m, p.d, 0, 0);
+        var load = function (ag) {
+          return avail.busy.filter(function (x) {
+            return x.e === ag.id && x.s >= dayStart && x.s < dayStart + 86400000;
+          }).length;
+        };
+        var lightest = Math.min.apply(null, free.map(load));
+        var tied = free.filter(function (a) { return load(a) === lightest; });
+        var pick = tied[(p.d + SLOT_TIMES.indexOf(t)) % tied.length];
+
+        slots.push({
+          time: t, label: timeLabel(t), epoch: start, date: date,
+          agent: pick.name, agentId: pick.id
+        });
+      });
+
+      if (slots.length) out.push({ date: date, label: dayLabel(probe), slots: slots });
+    }
+    return out;
+  }
+
+  /* Free text goes into a hand-built JSON body on the Make side, so
+     strip the characters that would break it rather than trying to
+     escape them downstream. */
+  function clean(v) {
+    return String(v == null ? '' : v)
+      .replace(/[\\"\u0000-\u001f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function bookingPayload(s, slot) {
+    var d = s.detail || {};
+    var pts = function (k) { return d[k] ? d[k].points : 0; };
+    var full = [contact.address, contact.city, contact.state, contact.zip]
+      .filter(Boolean).join(', ');
+
+    var notes = [];
+    if (answers.quoteAmount) notes.push('Quoted: ' + answers.quoteAmount);
+    if (answers.payment) notes.push('Payment: ' + answers.payment);
+    notes.push('Booked online. Raw ' + s.rawScore + '/100, enthusiasm +' + s.enthusiasmBonus + '.');
+
+    return {
+      start_epoch: String(slot.epoch),
+      appt_date: slot.date,
+      appt_time: slot.time,
+      agent: slot.agent,
+      agent_id: String(slot.agentId),
+      score: String(s.rawScore),
+      priority: s.priority,
+      full_name: clean(contact.fullName),
+      email: clean(contact.email),
+      phone: clean(contact.phone),
+      address: clean(full),
+      project_type: clean(answers.projectType),
+      urgency: clean(answers.urgency),
+      quotes: clean(answers.otherQuotes),
+      credit: clean(answers.credit || answers.payment),
+      dm: clean(answers.decisionMakers),
+      engagement: clean(answers.enthusiasm),
+      lead_source: 'Scored Web Form',
+      notes: clean(notes.join(' | ')),
+      s_urgency: String(pts('urgency')),
+      s_quotes: String(pts('otherQuotes')),
+      s_dm: String(pts('decisionMakers')),
+      s_credit: String(pts('credit') || pts('payment')),
+      s_engagement: String(d.enthusiasm ? d.enthusiasm.bonus : 0)
+    };
+  }
+
+  function renderCalendar(s) {
+    setProgress(visible().length + 2);
+
+    var c = el('div', 'intro');
+    var badge = el('div', 'badge'); badge.appendChild(tick()); c.appendChild(badge);
+    c.appendChild(el('h2', null, "Great — you're ready to choose an appointment."));
+    c.appendChild(el('p', 'lead', "We've matched your project with our current appointment availability."));
+
+    var slotArea = el('div', 'cal');
+    slotArea.appendChild(el('div', 'spinner'));
+    c.appendChild(slotArea);
+    show(c);
+
+    fetchAvailability().then(function (avail) {
+      var days = buildDays(avail);
+      slotArea.innerHTML = '';
+
+      if (!days.length) {
+        fallbackToCall(c, slotArea, s);
+        return;
+      }
+
+      var shown = 5;
+      var paint = function () {
+        slotArea.innerHTML = '';
+        days.slice(0, shown).forEach(function (day) {
+          var box = el('div', 'cal-day');
+          var h = el('h3', null, day.label);
+          box.appendChild(h);
+          var row = el('div', 'cal-times');
+          day.slots.forEach(function (slot) {
+            var b = el('button', 'cal-slot', slot.label);
+            b.type = 'button';
+            b.addEventListener('click', function () { bookSlot(s, slot); });
+            row.appendChild(b);
+          });
+          box.appendChild(row);
+          slotArea.appendChild(box);
+        });
+
+        if (shown < days.length) {
+          var more = el('p', 'cal-more');
+          var mb = el('button', null, 'Show more dates');
+          mb.type = 'button';
+          mb.addEventListener('click', function () { shown = days.length; paint(); });
+          more.appendChild(mb);
+          slotArea.appendChild(more);
+        }
+      };
+      paint();
+
+      var pri = el('p', 'note');
+      pri.innerHTML = '<strong>You have priority access.</strong> Pick any time above and it’s yours — ' +
+        'these slots are held for you and won’t be double booked. Questions first? Call ' + PHONE + '.';
+      c.appendChild(pri);
+      c.appendChild(expectNote());
+
+    }).catch(function (err) {
+      console.error('[Bathroom Excellence] Availability lookup failed:', err);
+      fallbackToCall(c, slotArea, s);
+    });
+  }
+
+  function expectNote() {
+    var what = el('p', 'note');
+    what.innerHTML = '<strong>What to expect.</strong> Plan on about 90 minutes. We measure, show you ' +
+      'materials, and leave you with a written price for the finished project.';
+    return what;
+  }
+
+  /* Availability is down, or genuinely nothing open in the window. Either
+     way the visitor should never see an error - they see the priority
+     callback promise instead. */
+  function fallbackToCall(c, slotArea, s) {
+    slotArea.remove();
+
+    /* The heading promised a calendar. There isn't one, so say the other
+       true thing instead rather than leaving a dangling invitation. */
+    var name = (contact.fullName || '').trim().split(/\s+/)[0];
+    var h = c.querySelector('h2');
+    if (h) {
+      h.textContent = name
+        ? 'You’re at the front of the line, ' + name + '.'
+        : 'You’re at the front of the line.';
+    }
+    var lead = c.querySelector('.lead');
+    if (lead) {
+      lead.textContent =
+        'We’ve matched your project with our current availability and flagged it for priority booking.';
+    }
+
+    var call = el('p', 'note');
+    call.innerHTML = '<strong>A senior design consultant will call you shortly.</strong> ' +
+      'Because your project is flagged as priority, you get first choice of our open times — ' +
+      'including evenings and Saturdays. Don’t want to wait? Call ' + PHONE + ' now and ' +
+      'mention you just finished the online scheduler.';
+    c.appendChild(call);
+    c.appendChild(expectNote());
+  }
+
+  function bookSlot(s, slot) {
+    progressEl.hidden = true;
+    var c = el('div', 'intro');
+    c.appendChild(el('h2', null, 'Reserving your appointment…'));
+    c.appendChild(el('div', 'spinner'));
+    show(c);
+
+    var body = new URLSearchParams(bookingPayload(s, slot));
+
+    /* No custom headers: URLSearchParams keeps this a "simple" request,
+       so the browser never fires a CORS preflight at the webhook. */
+    fetch(BOOK_URL, { method: 'POST', body: body })
+      .then(function (r) {
+        if (r.status === 409) return { taken: true };
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (j) {
+        if (j.taken) return renderTaken(s);
+        renderBooked(s, slot);
+      })
+      .catch(function (err) {
+        console.error('[Bathroom Excellence] Booking failed:', err);
+        renderBookFailed(s, slot);
+      });
+  }
+
+  function renderBooked(s, slot) {
+    var c = el('div', 'intro');
+    var badge = el('div', 'badge'); badge.appendChild(tick()); c.appendChild(badge);
+
+    var name = (contact.fullName || '').trim().split(/\s+/)[0];
+    c.appendChild(el('h2', null, name ? "You're all set, " + name + '.' : "You're all set."));
+
+    var when = el('p', 'lead');
+    when.innerHTML = 'We’ll see you <strong>' + dayLabel(slot.epoch) + ' at ' + slot.label + '</strong>.';
+    c.appendChild(when);
+
+    var conf = el('p', 'note');
+    conf.innerHTML = '<strong>A confirmation is on its way to ' + (contact.email || 'your inbox') + '.</strong> ' +
+      'Your designer will call before the visit to confirm. Need to change it? Call ' + PHONE + '.';
+    c.appendChild(conf);
+    c.appendChild(expectNote());
+    show(c);
+  }
+
+  function renderTaken(s) {
+    var c = el('div', 'intro');
+    c.appendChild(el('h2', null, 'That time just went.'));
+    c.appendChild(el('p', 'lead',
+      'Someone booked it while you were deciding. Here’s what’s still open — your priority access hasn’t changed.'));
+    show(c);
+    setTimeout(function () { renderCalendar(s); }, 1400);
+  }
+
+  function renderBookFailed(s, slot) {
+    var c = el('div', 'intro');
+    var badge = el('div', 'badge'); badge.appendChild(tick()); c.appendChild(badge);
+    c.appendChild(el('h2', null, 'Your request is in.'));
+    c.appendChild(el('p', 'lead',
+      'We have your details and your preferred time of ' + dayLabel(slot.epoch) + ' at ' + slot.label + '.'));
+
+    var warn = el('p', 'warn');
+    warn.textContent = 'We couldn’t confirm that slot automatically. Please call ' + PHONE +
+      ' to lock it in — mention you just finished the online scheduler.';
+    c.appendChild(warn);
+    c.appendChild(expectNote());
+    show(c);
+  }
+
   /* ---------- screen: result ---------- */
 
   function renderResult(s, delivered) {
+    /* Priority leads pick their own time. Everything the calendar needs is
+       already in hand, so hand straight over to it - it falls back to the
+       callback copy by itself if availability can't be reached. */
+    if (s.priority === 'High' && AVAILABILITY_URL && BOOK_URL) {
+      return renderCalendar(s);
+    }
+
     setProgress(visible().length + 2);
 
     var c = el('div', 'intro');
@@ -805,23 +1231,7 @@
 
     var name = (contact.fullName || '').trim().split(/\s+/)[0];
 
-    /* Only promise a calendar when one is actually configured. Without it the
-       high-priority path books by phone instead, and the copy says so. */
-    if (s.priority === 'High' && CALENDAR_EMBED) {
-      c.appendChild(el('h2', null, "Great — you're ready to choose an appointment."));
-      c.appendChild(el('p', 'lead', "We've matched your project with our current appointment availability."));
-
-      var embed = el('div', 'embed');
-      embed.id = 'calendarEmbed';
-      embed.innerHTML = CALENDAR_EMBED;
-      c.appendChild(embed);
-
-      var pri = el('p', 'note');
-      pri.innerHTML = '<strong>You have priority access.</strong> Pick any time above and it’s yours — ' +
-        'these slots are held for you and won’t be double booked. Questions first? Call ' + PHONE + '.';
-      c.appendChild(pri);
-
-    } else if (s.priority === 'High') {
+    if (s.priority === 'High') {
       c.appendChild(el('h2', null, name
         ? 'You’re at the front of the line, ' + name + '.'
         : 'You’re at the front of the line.'));
