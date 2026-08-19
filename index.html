@@ -393,6 +393,11 @@
   var AVAILABILITY_URL = 'https://hook.us1.make.com/7gsn1pbwj987s5dysghdnwk6buf69yqt';
   var BOOK_URL = 'https://hook.us1.make.com/v779dp9g9nl2syr8n9armlywo89sck74';
 
+  /* Disqualified leads go to their own scenario, not the normal intake one.
+     They must never reach the standard alert or the call queue - Jack does not
+     want them chased. Blank this and they fall back to the normal webhook. */
+  var DQ_WEBHOOK_URL = 'https://hook.us1.make.com/bw6enqb1hs17vmmg2iho0numqgtbaclf';
+
   /* ------------------------------------------------------------------
      Who works which days, and the appointment start times. Weekday keys
      are the 3-letter forms Intl produces for en-US.
@@ -419,7 +424,16 @@
      competitor is visiting before us, push the earliest offer out three days
      so that visit has already happened. Monday -> Thursday, in his words. */
   var QUOTE_FIRST_NOTICE_HOURS = 72;
-  var QUOTE_FIRST_ANSWER = 'I have another appointment scheduled before yours';
+
+  /* Arnold's rule: only a lead who already holds a quote can be seen at short
+     notice. Everyone else is still collecting bids, and Jack has lost whole
+     appointments to people who would not sign until the others had been. So
+     the delay applies to every answer except "already received a quote". */
+  var QUOTE_FIRST_ANSWERS = [
+    'I have another appointment scheduled before yours',
+    'I will likely have other quotes before your appointment',
+    "No, you're the first company I'm speaking with"
+  ];
 
   /* Everything is scheduled in the company's local time, not the
      visitor's - somebody booking from a phone on Pacific time still
@@ -427,7 +441,12 @@
   var TZ = 'America/Chicago';
 
   /* The score at or above which a lead gets priority booking. */
-  var PRIORITY_THRESHOLD = 80;
+  /* Lowered from 80 once the score stopped being the only gate: leads who rule
+     out financing are disqualified outright, the $500 keeps decision makers in
+     the room, and anyone without a quote in hand waits three days. At 80 a cash
+     buyer ready to go still scored 70 and could not book, which is what Jack
+     and Melissa kept hitting in testing. */
+  var PRIORITY_THRESHOLD = 70;
 
   var PHONE = '(636) 795-4643';
 
@@ -473,11 +492,16 @@
     {
       id: 'otherQuotes',
       title: 'Have you already spoken with any other bathroom remodeling companies?',
-      help: "If you've been quoted already, we'll come prepared to compare line by line.",
+      help: "We'll never ask you for a competitor's pricing — we just want you to be able to " +
+        'compare apples to apples.',
       options: [
+        /* None of these blocks a booking. What they change is how soon we can
+           come out: anyone still collecting bids waits three days so we are
+           not the quote they shop around. */
         { value: "Yes, I've received a quote", points: 40 },
         { value: 'I have another appointment scheduled before yours', points: 30 },
-        { value: "No, you're the first company I'm speaking with", points: 10 }
+        { value: 'I will likely have other quotes before your appointment', points: 30 },
+        { value: "No, you're the first company I'm speaking with", points: 20 }
       ]
     },
     {
@@ -487,7 +511,9 @@
       options: [
         { value: "I'll be making the decision myself", points: 20 },
         { value: "My spouse/partner and I will decide together, and we'll both be there", points: 20 },
-        { value: 'Someone else is involved and may not be available', points: 5 },
+        /* Jack: let one-leggers book. The $500 is the control, not this
+           question - he would rather have the appointment and work it. */
+        { value: 'Someone else is involved and may not be available', points: 20 },
         { value: "I'm gathering information for someone else", points: 0 }
       ]
     },
@@ -531,7 +557,10 @@
         { value: 'Fair credit', points: 15 },
         { value: 'Prefer to pay cash', points: 10 },
         { value: "I'd like to discuss options", points: 5 },
-        { value: "Financing probably isn't an option", points: 0 }
+        /* Jack: this answer takes them out of the running. `disqualify` is read
+           by tally(), so the flag lives with the answer rather than being
+           re-derived from wording somewhere else. */
+        { value: "Financing probably isn't an option", points: 0, disqualify: true }
       ]
     },
     {
@@ -618,7 +647,7 @@
 
   /* Raw score = Q2 + Q3 + Q4 + (Q5 or Q6). Enthusiasm is kept out of it. */
   function tally() {
-    var raw = 0, bonus = 0, detail = {};
+    var raw = 0, bonus = 0, detail = {}, dq = false;
 
     visible().forEach(function (q) {
       var value = answers[q.id];
@@ -628,6 +657,7 @@
 
       raw += opt.points || 0;
       bonus += opt.bonus || 0;
+      if (opt.disqualify) dq = true;
       detail[q.id] = { question: q.title, answer: value, points: opt.points || 0, bonus: opt.bonus || 0 };
     });
 
@@ -638,7 +668,11 @@
       rawScore: raw,
       enthusiasmBonus: bonus,
       effectiveScore: raw + bonus,
-      priority: raw >= PRIORITY_THRESHOLD ? 'High' : 'Standard',
+      /* Disqualified overrides the score outright. A top answer set with this
+         option still totals exactly 80, which is the priority threshold - so
+         without this they would be offered the calendar. */
+      priority: dq ? 'Disqualified' : (raw >= PRIORITY_THRESHOLD ? 'High' : 'Standard'),
+      disqualified: dq,
       detail: detail
     };
   }
@@ -914,6 +948,7 @@
       contact: contact,
       answers: answers,
       answerDetail: s.detail,
+      disqualified: s.disqualified,
       rawScore: s.rawScore,
       enthusiasmBonus: s.enthusiasmBonus,
       effectiveScore: s.effectiveScore,
@@ -938,7 +973,13 @@
       return setTimeout(function () { renderResult(s, true); }, 500);
     }
 
-    fetch(WEBHOOK_URL, {
+    /* Disqualified leads are a different business process: recorded in Builder
+       Prime and marked, but never alerted as a hot lead and never queued for a
+       call. Sending them somewhere else is what guarantees that, rather than
+       relying on a filter in the shared intake scenario. */
+    var target = (s.disqualified && DQ_WEBHOOK_URL) ? DQ_WEBHOOK_URL : WEBHOOK_URL;
+
+    fetch(target, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -1049,7 +1090,7 @@
 
   function buildDays(avail, times) {
     var now = avail.now;
-    var hours = answers.otherQuotes === QUOTE_FIRST_ANSWER
+    var hours = QUOTE_FIRST_ANSWERS.indexOf(answers.otherQuotes) > -1
       ? QUOTE_FIRST_NOTICE_HOURS
       : MIN_NOTICE_HOURS;
     var earliest = now + hours * 3600000;
@@ -1431,6 +1472,23 @@
 
     var name = (contact.fullName || '').trim().split(/\s+/)[0];
 
+    if (s.disqualified) {
+      /* No calendar, and no promise of a call - Jack does not want these
+         chased. The phone number stays so anyone whose situation changes can
+         still reach us. */
+      c.appendChild(el('h2', null, name ? 'Thanks, ' + name + ' — we’ve got your details.'
+                                        : 'Thanks — we’ve got your details.'));
+      c.appendChild(el('p', 'lead', 'We appreciate you taking the time to go through that.'));
+
+      var dqn = el('p', 'note');
+      dqn.innerHTML = '<strong>We’ll keep your details on file.</strong> If your plans or ' +
+        'timing change, we’d be glad to hear from you — just call ' + PHONE + ' and we’ll ' +
+        'pick things up from there.';
+      c.appendChild(dqn);
+      show(c);
+      return;
+    }
+
     if (s.priority === 'High') {
       c.appendChild(el('h2', null, name
         ? 'You’re at the front of the line, ' + name + '.'
@@ -1457,10 +1515,7 @@
       c.appendChild(std);
     }
 
-    var what = el('p', 'note');
-    what.innerHTML = '<strong>What to expect.</strong> Plan on about 90 minutes. We measure, show you ' +
-      'materials, and leave you with a written price for the finished project.';
-    c.appendChild(what);
+    c.appendChild(expectNote());
 
     if (!delivered) {
       var warn = el('p', 'warn');
