@@ -256,6 +256,21 @@
     color: var(--ink); text-align: left;
   }
 
+  .cal-alert-sub { display: block; margin-top: 9px; }
+  .cal-alert-sub strong { color: var(--gold-deep); }
+
+  /* Sits directly under the red box on the confirmation screen, so the way
+     out is next to the reason for taking it. */
+  .back-warn {
+    display: block; width: 100%; margin: 12px 0 0;
+    padding: 13px 20px; border-radius: 9px; cursor: pointer;
+    border: 1.5px solid #e0a09c; background: #fff;
+    font: inherit; font-size: 1rem; font-weight: 700; color: var(--danger);
+    transition: background-color .15s, border-color .15s;
+  }
+  .back-warn:hover { background: #fdf3f2; border-color: var(--danger); }
+  .back-warn:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
+
   .note {
     margin: 22px 0 0; padding: 16px 18px; border-radius: 10px;
     background: #f7fafb; border: 1px solid var(--line);
@@ -416,6 +431,9 @@
 
   var PHONE = '(636) 795-4643';
 
+  /* Reschedules go to the tracked line, not the main office number. */
+  var RESCHEDULE_PHONE = '800-245-8143';
+
   /* ------------------------------------------------------------------
      Questions. `points` count toward the raw 0-100 score. `bonus` is the
      internal enthusiasm bonus and deliberately never touches that score.
@@ -501,15 +519,19 @@
     },
     {
       id: 'credit',
-      title: 'Which range best describes your credit?',
-      help: 'This only affects which financing programs we can show you. No credit check happens here.',
+      /* Never ask for a score. Softer framing gets truthful answers and fewer
+         people abandoning the form here. Points keep the old 20/15/10/5/0
+         spread, so scores stay comparable with leads captured before the
+         rewording. */
+      title: 'If financing were helpful, which best describes your situation?',
+      help: 'This only affects which programs we can show you. No credit check happens here.',
       showIf: function (a) { return a.payment === "I'd like to explore financing options"; },
       options: [
-        { value: 'Good / Excellent', points: 20 },
-        { value: 'Fair', points: 15 },
-        { value: "I'm not sure", points: 5 },
-        { value: 'Prefer not to answer', points: 5 },
-        { value: 'Needs some work', points: 0 }
+        { value: 'Good or excellent credit', points: 20 },
+        { value: 'Fair credit', points: 15 },
+        { value: 'Prefer to pay cash', points: 10 },
+        { value: "I'd like to discuss options", points: 5 },
+        { value: "Financing probably isn't an option", points: 0 }
       ]
     },
     {
@@ -1146,8 +1168,11 @@
 
     /* First thing on the card, before the badge, because it has to be read
        before a time is picked - not after. */
-    c.appendChild(el('div', 'cal-alert',
-      'Please select an appointment time when all decision makers can be present.'));
+    var lead500 = el('div', 'cal-alert');
+    lead500.innerHTML = 'Please select an appointment time when all decision makers can be present.' +
+      '<span class="cal-alert-sub"><strong>A $500 discount</strong> will be given at the time of the ' +
+      'appointment if all necessary decision makers are present. Please choose carefully.</span>';
+    c.appendChild(lead500);
 
     var badge = el('div', 'badge'); badge.appendChild(tick()); c.appendChild(badge);
     c.appendChild(el('h2', null, "Great — you're ready to choose an appointment."));
@@ -1278,10 +1303,18 @@
     c.appendChild(when);
 
     var warn = el('p', 'warn');
-    warn.textContent = 'If this is a time when all decision makers cannot be present, ' +
-      'please go back and choose another. Everyone who will be part of the decision ' +
-      'needs to be there.';
+    warn.innerHTML = 'Just double checking \u2014 did you accidentally choose an appointment time ' +
+      'that may <strong>disqualify you for the $500 discount</strong>? If so, go back and choose a ' +
+      'time when all decision makers, or parties involved in the decision, can be present \u2014 ' +
+      'to conserve everyone\u2019s time.';
     c.appendChild(warn);
+
+    /* Deliberately above Confirm: the way out belongs next to the reason for
+       taking it, not below the button that commits. */
+    var back = el('button', 'back-warn', '\u2190 Back to the calendar');
+    back.type = 'button';
+    back.addEventListener('click', function () { renderCalendar(s); });
+    c.appendChild(back);
 
     var note = el('p', 'note');
     note.innerHTML = '<strong>Press Confirm and you\u2019re booked.</strong> ' +
@@ -1294,11 +1327,6 @@
     go.style.marginTop = '18px';
     go.addEventListener('click', function () { bookSlot(s, slot); });
     c.appendChild(go);
-
-    var back = el('button', 'back', '\u2190 Back to the calendar');
-    back.type = 'button';
-    back.addEventListener('click', function () { renderCalendar(s); });
-    c.appendChild(back);
 
     show(c);
   }
@@ -1351,8 +1379,9 @@
     c.appendChild(when);
 
     var conf = el('p', 'note');
-    conf.innerHTML = '<strong>A confirmation is on its way to ' + (contact.email || 'your inbox') + '.</strong> ' +
-      'Your designer will call before the visit to confirm. Need to change it? Call ' + PHONE + '.';
+    conf.innerHTML = '<strong>A confirmation text and email are on the way!</strong> ' +
+      'Check ' + (contact.email || 'your inbox') + '. If you need to reschedule, just reply to the ' +
+      'confirmation text, or call ' + RESCHEDULE_PHONE + '.';
     c.appendChild(conf);
     c.appendChild(expectNote());
     show(c);
