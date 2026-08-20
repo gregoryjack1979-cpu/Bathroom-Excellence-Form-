@@ -612,13 +612,14 @@
      the two must not drift apart. */
   var smsOptIn = false;
   var smsOptInAt = null;
-  var CONSENT_VERSION = '2026-08-v1';
+  var CONSENT_VERSION = '2026-08-v2';
   var CONSENT_HTML =
     'I agree to receive SMS and email communications from Bathroom Excellence ' +
     'regarding my booking request. Consent is not a condition of purchase. ' +
     'Message frequency varies. Message and data rates may apply. Reply STOP to ' +
     'cancel or HELP for assistance. You can unsubscribe from emails at any time. ' +
-    'View our <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.';
+    'View our <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a> ' +
+    'and <a href="privacy.html#sms-terms" target="_blank" rel="noopener">SMS Terms</a>.';
   var CONSENT_TEXT = CONSENT_HTML.replace(/<[^>]+>/g, '');
   var startedAt = new Date().toISOString();
 
