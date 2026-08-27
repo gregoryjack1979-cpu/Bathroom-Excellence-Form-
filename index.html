@@ -420,10 +420,13 @@
   var HORIZON_DAYS = 21;
   var MIN_NOTICE_HOURS = 18;
 
-  /* Jack wants to be the last quote, not the first. When a lead tells us a
-     competitor is visiting before us, push the earliest offer out three days
-     so that visit has already happened. Monday -> Thursday, in his words. */
-  var QUOTE_FIRST_NOTICE_HOURS = 72;
+  /* Jack wants to be the last quote, not the first. When a lead has not
+     already received a quote, push the earliest offer out so the competition
+     has been and gone before we arrive. Raised from 72 to 120 hours on
+     Jack's instruction - "if they don't have other quotes yet it needs to go
+     a minimum of five days out" - and matched to the same five-day rule now
+     running on the phone tool. */
+  var QUOTE_FIRST_NOTICE_HOURS = 120;
 
   /* Arnold's rule: only a lead who already holds a quote can be seen at short
      notice. Everyone else is still collecting bids, and Jack has lost whole
@@ -447,6 +450,17 @@
      buyer ready to go still scored 70 and could not book, which is what Jack
      and Melissa kept hitting in testing. */
   var PRIORITY_THRESHOLD = 70;
+
+  /* Jack's one-legger rule. A two-story home where the visitor says they
+     decide alone is the pattern behind his worst wasted visits - Dave blew
+     off a rescheduled sale to run one. It costs 40 points, but deliberately
+     does NOT gate the calendar: the answer to a one-legger is to book it in
+     the evening when both people are home, not to refuse the booking. See
+     ONE_LEGGER_BAND and the evening override in renderCalendar(). */
+  var ONE_LEGGER_PENALTY = -40;
+  var ONE_LEGGER_STORY = 'Two or more storeys';
+  var ONE_LEGGER_DM = "I'll be making the decision myself";
+  var ONE_LEGGER_BAND = ['17:00', '18:00'];
 
   var PHONE = '(636) 795-4643';
 
@@ -515,6 +529,20 @@
            question - he would rather have the appointment and work it. */
         { value: 'Someone else is involved and may not be available', points: 20 },
         { value: "I'm gathering information for someone else", points: 0 }
+      ]
+    },
+    {
+      /* Scores nothing on its own. It exists to be read together with
+         decisionMakers: Jack's rule is that a two-story home where one
+         person claims to decide alone is almost always a household with a
+         second decision maker who simply is not on the call. See
+         ONE_LEGGER_PENALTY. */
+      id: 'houseStory',
+      title: 'Is your home a single storey, or two or more?',
+      help: 'It tells our consultant what to expect before they arrive.',
+      options: [
+        { value: 'Single storey', points: 0 },
+        { value: 'Two or more storeys', points: 0 }
       ]
     },
     {
@@ -646,6 +674,13 @@
     return null;
   }
 
+  /* Two answers read together, never one on its own: a two-story home plus
+     "I decide alone". Either answer by itself is perfectly normal. */
+  function isOneLegger() {
+    return answers.houseStory === ONE_LEGGER_STORY &&
+           answers.decisionMakers === ONE_LEGGER_DM;
+  }
+
   /* Raw score = Q2 + Q3 + Q4 + (Q5 or Q6). Enthusiasm is kept out of it. */
   function tally() {
     var raw = 0, bonus = 0, detail = {}, dq = false;
@@ -662,13 +697,29 @@
       detail[q.id] = { question: q.title, answer: value, points: opt.points || 0, bonus: opt.bonus || 0 };
     });
 
+    /* Clamp the positive categories to 100 BEFORE the penalty, so the
+       deduction lands on a 0-100 base and a perfect answer set drops to 60
+       rather than being absorbed by a higher ceiling - that was the bug on
+       the phone tool, where a 140 max made the -40 do nothing. */
     raw = Math.max(0, Math.min(100, raw));
     bonus = Math.max(0, Math.min(10, bonus));
 
+    /* The one-legger deduction is reported but deliberately kept OUT of the
+       priority gate. Jack's answer to a one-legger is an evening slot, not a
+       refused booking, so a strong buyer who happens to decide alone still
+       reaches the calendar - they just only see evening times. Gating on the
+       penalised score instead would silently drop a 100 to 60 and push them
+       to the callback path. */
+    var oneLegger = isOneLegger();
+    var scored = oneLegger ? Math.max(0, raw + ONE_LEGGER_PENALTY) : raw;
+
     return {
-      rawScore: raw,
+      rawScore: scored,
       enthusiasmBonus: bonus,
-      effectiveScore: raw + bonus,
+      effectiveScore: scored + bonus,
+      oneLegger: oneLegger,
+      oneLeggerPenalty: oneLegger ? ONE_LEGGER_PENALTY : 0,
+      scoreBeforePenalty: raw,
       /* Disqualified overrides the score outright. A top answer set with this
          option still totals exactly 80, which is the priority threshold - so
          without this they would be offered the calendar. */
@@ -954,6 +1005,9 @@
       enthusiasmBonus: s.enthusiasmBonus,
       effectiveScore: s.effectiveScore,
       priority: s.priority,
+      oneLegger: s.oneLegger,
+      oneLeggerPenalty: s.oneLeggerPenalty,
+      scoreBeforePenalty: s.scoreBeforePenalty,
       sms_email_opt_in: smsOptIn,
       consent_text_version: CONSENT_VERSION,
       consent_text: CONSENT_TEXT,
@@ -1080,6 +1134,11 @@
      when they never answered. Read off the option's `band` so the wording on
      screen can change without touching the calendar. */
   function preferredTimes() {
+    /* A one-legger sees evening times only, whatever they picked. Daytime is
+       where Jack loses these visits - the second decision maker is at work -
+       so the evening band overrides the visitor's own preference rather than
+       narrowing it. */
+    if (isOneLegger()) return ONE_LEGGER_BAND;
     var q = null;
     for (var i = 0; i < QUESTIONS.length; i++) {
       if (QUESTIONS[i].id === 'timeOfDay') { q = QUESTIONS[i]; break; }
@@ -1187,6 +1246,12 @@
       quotes: clean(answers.otherQuotes),
       credit: clean(answers.credit || answers.payment),
       dm: clean(answers.decisionMakers),
+      house_story: clean(answers.houseStory),
+      /* Sent so the consultant sees it on the appointment and so the wasted
+         one-legger visits stay countable after the fact. */
+      one_legger_risk: s.oneLegger ? 'YES' : 'NO',
+      s_one_legger: String(s.oneLeggerPenalty || 0),
+      score_before_penalty: String(s.scoreBeforePenalty),
       engagement: clean(answers.enthusiasm),
       time_of_day: clean(answers.timeOfDay),
       payment: clean(answers.payment),
@@ -1216,6 +1281,18 @@
       'appointment if all necessary decision makers are present. Please choose carefully.</span>';
     c.appendChild(lead500);
 
+    /* Without this the evening-only override just looks like we have no
+       daytime availability, and they call in to ask. Say why instead. */
+    if (isOneLegger()) {
+      var evOnly = el('p', 'note');
+      evOnly.innerHTML = '<strong>We’re showing you evening times only.</strong> ' +
+        'Our consultant covers design options, measurements and a full priced ' +
+        'proposal in one visit, and everyone involved in the decision should be ' +
+        'there to see it — evenings are when that actually works. Need a daytime ' +
+        'appointment? Call ' + PHONE + ' and we’ll arrange it.';
+      c.appendChild(evOnly);
+    }
+
     var badge = el('div', 'badge'); badge.appendChild(tick()); c.appendChild(badge);
     c.appendChild(el('h2', null, "Great — you're ready to choose an appointment."));
     c.appendChild(el('p', 'lead', "We've matched your project with our current appointment availability."));
@@ -1232,8 +1309,13 @@
 
       /* One band is two of six slots, so a busy fortnight can empty it. Show
          the rest rather than sending a priority lead to the callback screen
-         while other times sit open. */
-      if (!days.length && pref) {
+         while other times sit open.
+
+         Never widen for a one-legger: offering them a daytime slot is the
+         wasted visit this rule exists to prevent. If the evenings really are
+         full they go to the callback screen, where a person can work it out
+         with them. */
+      if (!days.length && pref && !isOneLegger()) {
         days = buildDays(avail, SLOT_TIMES);
         widened = days.length > 0;
       }
