@@ -398,6 +398,55 @@
      want them chased. Blank this and they fall back to the normal webhook. */
   var DQ_WEBHOOK_URL = 'https://hook.us1.make.com/bw6enqb1hs17vmmg2iho0numqgtbaclf';
 
+  /* The form always claims "Scored Web Form" as the source, but a shared/resold
+     lead (Home Advisor, Modernize, QuinStreet, Thumbtack) really came from a
+     vendor other companies also got - and Jack loses appointments to people
+     who won't sign until those other quotes have been seen. The booking
+     scenario already looks this up AFTER a slot is picked and floors the
+     score accordingly, but by then it's too late to change which slots were
+     even offered. "BE - Web Lead Source Check" runs the same Builder Prime
+     lookup before the calendar renders, purely so buildDays() can push the
+     earliest slot out the same way it already does for a self-reported
+     "no quote yet" answer. Leave blank to skip the check entirely - the
+     calendar just won't know about shared leads until after booking. */
+  var LEAD_SOURCE_URL = 'https://hook.us1.make.com/oklhm3ooe16wpacr2rcukt7863ufy4ae';
+
+  /* Never let a slow Builder Prime lookup hold up the calendar. If it hasn't
+     answered by the time the main submission has, book as if it weren't
+     shared - the after-the-fact score check on the Make side still catches
+     it, so the only cost of a miss here is a slightly earlier slot offered,
+     never a lost booking. */
+  var LEAD_SOURCE_TIMEOUT_MS = 4000;
+
+  /* Filled in by checkLeadSource(), read by buildDays(). Defaults closed
+     (not shared) so a lookup that never runs or never resolves behaves
+     exactly like today. */
+  var leadSource = { shared: false, source: null };
+
+  function checkLeadSource(phone) {
+    if (!LEAD_SOURCE_URL || !phone) return Promise.resolve();
+
+    var timeout = new Promise(function (resolve) {
+      setTimeout(resolve, LEAD_SOURCE_TIMEOUT_MS);
+    });
+    var lookup = fetch(LEAD_SOURCE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: phone })
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        leadSource.shared = !!(j && j.shared === 'YES');
+        leadSource.source = (j && j.source) || null;
+      })
+      .catch(function (e) {
+        console.error('[Bathroom Excellence] Lead source check failed:', e);
+        /* leadSource stays at its closed default. */
+      });
+
+    return Promise.race([lookup, timeout]);
+  }
+
   /* ------------------------------------------------------------------
      Who works which days, and the appointment start times. Weekday keys
      are the 3-letter forms Intl produces for en-US.
@@ -1034,16 +1083,25 @@
        relying on a filter in the shared intake scenario. */
     var target = (s.disqualified && DQ_WEBHOOK_URL) ? DQ_WEBHOOK_URL : WEBHOOK_URL;
 
-    fetch(target, {
+    /* Runs alongside the main submission, not after it - the two calls take
+       roughly the same time, so by the time we're ready to show the
+       calendar the source check has usually already resolved. See
+       LEAD_SOURCE_URL above for why this matters before slots are offered
+       rather than after. */
+    var sourceCheck = checkLeadSource(contact.phone);
+
+    var submit = fetch(target, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     })
-      .then(function (res) { renderResult(s, res.ok); })
+      .then(function (res) { return res.ok; })
       .catch(function (error) {
         console.error('[Bathroom Excellence] Submission failed:', error);
-        renderResult(s, false);
+        return false;
       });
+
+    Promise.all([submit, sourceCheck]).then(function (r) { renderResult(s, r[0]); });
   }
 
   function renderSending() {
@@ -1150,7 +1208,11 @@
 
   function buildDays(avail, times) {
     var now = avail.now;
-    var hours = QUOTE_FIRST_ANSWERS.indexOf(answers.otherQuotes) > -1
+    var quoteFirst = QUOTE_FIRST_ANSWERS.indexOf(answers.otherQuotes) > -1;
+    /* Same five-day push as a self-reported "no quote yet" - a shared lead
+       means other companies got this same lead and are quoting it too,
+       whether or not the visitor mentioned it. */
+    var hours = (quoteFirst || leadSource.shared)
       ? QUOTE_FIRST_NOTICE_HOURS
       : MIN_NOTICE_HOURS;
     var earliest = now + hours * 3600000;
@@ -1252,6 +1314,13 @@
       one_legger_risk: s.oneLegger ? 'YES' : 'NO',
       s_one_legger: String(s.oneLeggerPenalty || 0),
       score_before_penalty: String(s.scoreBeforePenalty),
+      /* What the pre-calendar Builder Prime check saw, for cross-checking
+         against the booking scenario's own (authoritative) lookup - they
+         should always agree, since it's the same phone number moments
+         apart. A mismatch would mean Builder Prime got a new record for
+         this person in between, which is worth knowing about. */
+      web_precheck_shared: leadSource.shared ? 'YES' : 'NO',
+      web_precheck_source: clean(leadSource.source || ''),
       engagement: clean(answers.enthusiasm),
       time_of_day: clean(answers.timeOfDay),
       payment: clean(answers.payment),
