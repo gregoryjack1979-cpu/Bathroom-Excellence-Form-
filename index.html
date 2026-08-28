@@ -507,7 +507,7 @@
      the evening when both people are home, not to refuse the booking. See
      ONE_LEGGER_BAND and the evening override in renderCalendar(). */
   var ONE_LEGGER_PENALTY = -40;
-  var ONE_LEGGER_STORY = 'Two or more storeys';
+  var ONE_LEGGER_STORY = 'Two or more stories';
   var ONE_LEGGER_DM = "I'll be making the decision myself";
   var ONE_LEGGER_BAND = ['17:00', '18:00'];
 
@@ -587,11 +587,11 @@
          second decision maker who simply is not on the call. See
          ONE_LEGGER_PENALTY. */
       id: 'houseStory',
-      title: 'Is your home a single storey, or two or more?',
+      title: 'Is your home a single story, or two or more?',
       help: 'It tells our consultant what to expect before they arrive.',
       options: [
-        { value: 'Single storey', points: 0 },
-        { value: 'Two or more storeys', points: 0 }
+        { value: 'Single story', points: 0 },
+        { value: 'Two or more stories', points: 0 }
       ]
     },
     {
@@ -648,6 +648,19 @@
         { value: "Very interested — I'm ready to get this done", points: 0, bonus: 10 },
         { value: 'Interested — I want to see my options', points: 0, bonus: 5 },
         { value: 'Mostly researching right now', points: 0, bonus: 0 }
+      ]
+    },
+    {
+      /* Scores nothing - purely scheduling flexibility. Melissa's booking
+         showed the office could fill a cancellation with an earlier slot on
+         the same date if the household could get there sooner, but only for
+         leads who say up front that they can. */
+      id: 'flexOnCancellation',
+      title: 'If a cancellation opened up an earlier appointment or a different time on that same date, would you and your significant other be available to take it?',
+      help: 'This only helps us offer you a sooner time if one opens up — it never changes the appointment you book today.',
+      options: [
+        { value: 'Yes, we could take an earlier or different time that day', points: 0 },
+        { value: 'No, we need this specific time', points: 0 }
       ]
     }
   ];
@@ -1323,6 +1336,7 @@
       web_precheck_source: clean(leadSource.source || ''),
       engagement: clean(answers.enthusiasm),
       time_of_day: clean(answers.timeOfDay),
+      flex_on_cancellation: clean(answers.flexOnCancellation),
       payment: clean(answers.payment),
       lead_source: 'Scored Web Form',
       /* Advisory only: the booking scenario may ADD the consent tag from this,
