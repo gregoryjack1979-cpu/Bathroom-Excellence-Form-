@@ -259,8 +259,9 @@
   .cal-alert-sub { display: block; margin-top: 9px; }
   .cal-alert-sub strong { color: var(--gold-deep); }
 
-  /* Sits directly under the red box on the confirmation screen, so the way
-     out is next to the reason for taking it. */
+  /* The way back off the confirmation screen. Kept prominent so a visitor who
+     picked a time their co-decider can't make can still get out before the
+     appointment is real. */
   .back-warn {
     display: block; width: 100%; margin: 12px 0 0;
     padding: 13px 20px; border-radius: 9px; cursor: pointer;
@@ -1509,12 +1510,10 @@
     when.innerHTML = '<strong>' + dayLabel(slot.epoch) + ' at ' + slot.label + '</strong>';
     c.appendChild(when);
 
-    var warn = el('p', 'warn');
-    warn.innerHTML = 'Just double checking \u2014 did you accidentally choose an appointment time ' +
-      'that may <strong>disqualify you for the $500 discount</strong>? If so, go back and choose a ' +
-      'time when all decision makers, or parties involved in the decision, can be present \u2014 ' +
-      'to conserve everyone\u2019s time.';
-    c.appendChild(warn);
+    /* The $500 decision-maker warning that used to sit here was removed on
+       Jack's instruction. The same point is still made earlier, on the
+       calendar screen, before a time is picked - see lead500 in
+       renderCalendar(). */
 
     /* Deliberately above Confirm: the way out belongs next to the reason for
        taking it, not below the button that commits. */
