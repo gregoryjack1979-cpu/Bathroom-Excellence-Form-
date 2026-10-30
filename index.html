@@ -511,6 +511,10 @@
   var ONE_LEGGER_STORY = 'Two or more stories';
   var ONE_LEGGER_DM = "I'll be making the decision myself";
   var ONE_LEGGER_BAND = ['17:00', '18:00'];
+  /* 30 Oct 2026 (Jack): follow-up asked only after "I'll be making the decision myself". Any answer
+     other than this one means a second decision maker exists, so the visit is treated as a
+     one-legger (evening times only, same penalty) whatever the house type. */
+  var DM_FOLLOWUP_ALONE = "No, it's completely my call";
 
   var PHONE = '(636) 795-4643';
 
@@ -579,6 +583,18 @@
            question - he would rather have the appointment and work it. */
         { value: 'Someone else is involved and may not be available', points: 20 },
         { value: "I'm gathering information for someone else", points: 0 }
+      ]
+    },
+    {
+      /* Jack's one-legger follow-up. Only shown to someone who says they decide alone. */
+      id: 'dmFollowUp',
+      title: 'If you saw a design you loved, is there anyone you would want to show it to before you go ahead?',
+      help: 'So we can make sure everyone who wants a say gets to see the options.',
+      showIf: function (a) { return a.decisionMakers === ONE_LEGGER_DM; },
+      options: [
+        { value: DM_FOLLOWUP_ALONE, points: 0 },
+        { value: 'Yes, my spouse/partner', points: 0 },
+        { value: 'Yes, someone else (family member, landlord, etc.)', points: 0 }
       ]
     },
     {
@@ -740,8 +756,9 @@
   /* Two answers read together, never one on its own: a two-story home plus
      "I decide alone". Either answer by itself is perfectly normal. */
   function isOneLegger() {
-    return answers.houseStory === ONE_LEGGER_STORY &&
-           answers.decisionMakers === ONE_LEGGER_DM;
+    if (answers.decisionMakers !== ONE_LEGGER_DM) return false;
+    if (answers.dmFollowUp !== undefined && answers.dmFollowUp !== DM_FOLLOWUP_ALONE) return true;
+    return answers.houseStory === ONE_LEGGER_STORY;
   }
 
   /* Raw score = Q2 + Q3 + Q4 + (Q5 or Q6). Enthusiasm is kept out of it. */
@@ -1322,6 +1339,7 @@
       quotes: clean(answers.otherQuotes),
       credit: clean(answers.credit || answers.payment),
       dm: clean(answers.decisionMakers),
+      dm_follow_up: clean(answers.dmFollowUp || ''),
       house_story: clean(answers.houseStory),
       /* Sent so the consultant sees it on the appointment and so the wasted
          one-legger visits stay countable after the fact. */
