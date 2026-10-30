@@ -511,10 +511,11 @@
   var ONE_LEGGER_STORY = 'Two or more stories';
   var ONE_LEGGER_DM = "I'll be making the decision myself";
   var ONE_LEGGER_BAND = ['17:00', '18:00'];
-  /* 30 Oct 2026 (Jack): follow-up asked only after "I'll be making the decision myself". Any answer
-     other than this one means a second decision maker exists, so the visit is treated as a
-     one-legger (evening times only, same penalty) whatever the house type. */
-  var DM_FOLLOWUP_ALONE = "No, it's completely my call";
+  /* 30 Oct 2026 (Jack): Jacknold's phone check, asked only after "I'll be making the decision myself":
+     the discount line for all decision makers being present, then "will it be just you, or will anyone
+     else be joining you?". Anyone joining means a second decision maker exists, so the visit is treated
+     as a one-legger (evening times only, same penalty) whatever the house type. */
+  var DM_FOLLOWUP_ALONE = 'Just me';
 
   var PHONE = '(636) 795-4643';
 
@@ -586,15 +587,15 @@
       ]
     },
     {
-      /* Jack's one-legger follow-up. Only shown to someone who says they decide alone. */
+      /* Jack's one-legger follow-up, same wording as Jacknold on the phone. Only shown to someone who says they decide alone. */
       id: 'dmFollowUp',
-      title: 'If you saw a design you loved, is there anyone you would want to show it to before you go ahead?',
-      help: 'So we can make sure everyone who wants a say gets to see the options.',
+      title: 'Great! So we know who to expect at the appointment, will it be just you, or will anyone else be joining you?',
+      help: 'In addition to the discount for all decision makers being present, we also offer a variety of discounts including senior, military and many others, usually equaling 20% or more!',
       showIf: function (a) { return a.decisionMakers === ONE_LEGGER_DM; },
       options: [
         { value: DM_FOLLOWUP_ALONE, points: 0 },
-        { value: 'Yes, my spouse/partner', points: 0 },
-        { value: 'Yes, someone else (family member, landlord, etc.)', points: 0 }
+        { value: 'My spouse/partner will be joining me', points: 0 },
+        { value: 'Someone else will be joining me (family member, etc.)', points: 0 }
       ]
     },
     {
